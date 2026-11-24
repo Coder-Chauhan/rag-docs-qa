@@ -1,0 +1,33 @@
+name: RAGAS evaluation
+
+# Runs on demand only, because it calls the OpenAI API.
+# Add an OPENAI_API_KEY repository secret before running it.
+on:
+  workflow_dispatch:
+    inputs:
+      top_k:
+        description: "Chunks retrieved per question"
+        default: "4"
+      fail_under:
+        description: "Fail if any metric averages below this"
+        default: "0.7"
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements-eval.txt
+      - name: Run RAGAS
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: python -m eval.ragas_eval --top-k ${{ inputs.top_k }} --fail-under ${{ inputs.fail_under }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ragas-results
+          path: eval/results/

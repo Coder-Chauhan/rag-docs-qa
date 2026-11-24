@@ -102,6 +102,15 @@ class RAGService:
             blocks.append(f"[{i}] ({label})\n{doc.page_content}")
         return "\n\n".join(blocks)
 
+    def retrieve(self, question: str, k: int | None = None) -> list[Document]:
+        return self.vectorstore.similarity_search(question, k=k or self.default_k)
+
+    def answer_with_contexts(self, question: str, k: int | None = None) -> tuple[str, list[Document]]:
+        """Retrieve context and generate an answer. Returns the answer and the retrieved chunks."""
+        docs = self.retrieve(question, k)
+        answer = self.chain.invoke({"context": self._format_context(docs), "question": question})
+        return answer, docs
+
     def ask(self, question: str, k: int | None = None) -> dict:
         if self.count() == 0:
             return {
@@ -109,8 +118,7 @@ class RAGService:
                 "sources": [],
             }
 
-        docs = self.vectorstore.similarity_search(question, k=k or self.default_k)
-        answer = self.chain.invoke({"context": self._format_context(docs), "question": question})
+        answer, docs = self.answer_with_contexts(question, k)
 
         sources = [
             {
