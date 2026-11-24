@@ -32,6 +32,7 @@ Question
 - Source citations with file name, page number and snippet
 - Persistent vector store (survives restarts)
 - Configurable models, chunk size, overlap and top-k via environment variables
+- RAGAS evaluation suite (faithfulness, answer relevancy, context precision, context recall) with a CI quality gate
 - Dependency-injected service layer, so the test suite runs fully offline with fake embeddings and a fake LLM (no API key or cost)
 - Docker support and GitHub Actions CI
 
@@ -44,10 +45,14 @@ rag-docs-qa/
 │   ├── rag.py         # RAG service: loading, chunking, retrieval, generation
 │   ├── schemas.py     # Pydantic request/response models
 │   └── config.py      # Settings from environment / .env
+├── eval/
+│   ├── dataset.json   # Evaluation questions with reference answers
+│   └── ragas_eval.py  # RAGAS evaluation runner
 ├── tests/
-│   └── test_api.py    # Offline API tests (pytest)
+│   ├── test_api.py    # Offline API tests (pytest)
+│   └── test_eval.py   # Offline tests for the evaluation harness
 ├── sample_docs/       # Example document to try it out
-├── .github/workflows/ci.yml
+├── .github/workflows/  # ci.yml (tests), ragas-eval.yml (on-demand evaluation)
 ├── Dockerfile
 └── requirements.txt
 ```
@@ -114,6 +119,38 @@ curl -X POST http://localhost:8000/query \
 | `TOP_K`           | `4`                      | Chunks retrieved per question    |
 | `MAX_UPLOAD_MB`   | `20`                     | Maximum upload size              |
 
+## Evaluation with RAGAS
+
+The `eval/` folder measures answer quality with [RAGAS](https://docs.ragas.io), using an LLM as judge.
+It ingests `sample_docs/` into a temporary in-memory collection, so it never touches the API's data,
+and runs each question in `eval/dataset.json` through the same retrieval and generation code the API uses.
+
+| Metric              | Question it answers                                                  | Needs reference |
+|---------------------|----------------------------------------------------------------------|-----------------|
+| `faithfulness`      | Are the answer's claims supported by the retrieved context?          | No              |
+| `answer_relevancy`  | Does the answer actually address the question?                       | No              |
+| `context_precision` | Are the relevant chunks ranked at the top of the results?            | Yes             |
+| `context_recall`    | Does the retrieved context contain everything the answer needs?      | Yes             |
+
+Faithfulness and answer relevancy grade generation; context precision and recall grade retrieval.
+
+```bash
+pip install -r requirements-eval.txt
+python -m eval.ragas_eval                      # default: top_k=4, judge=gpt-4o-mini
+python -m eval.ragas_eval --top-k 2 --fail-under 0.7
+```
+
+It prints a summary table and writes per-question scores to `eval/results/ragas_results.csv`, plus
+`ragas_summary.json` with the run configuration. With `--fail-under`, the command exits with code 1
+if any metric averages below the threshold, so it can act as a quality gate.
+
+To evaluate your own documents, point `--docs` at a folder and `--dataset` at a JSON file of
+`{"question": ..., "reference": ...}` objects. Rerun after changing chunk size, overlap, top-k or
+the prompt to compare configurations.
+
+**In GitHub Actions:** add an `OPENAI_API_KEY` repository secret, then run the *RAGAS evaluation*
+workflow from the Actions tab. Results are uploaded as a build artifact.
+
 ## Testing
 
 ```bash
@@ -121,11 +158,11 @@ pytest -q
 ```
 
 Tests use LangChain's `DeterministicFakeEmbedding` and `FakeListChatModel` with an in-memory
-Chroma collection, so they need no API key and run in about a second.
+Chroma collection, so they need no API key and run in about a second. The evaluation harness is
+tested the same way, with stand-in metrics in place of RAGAS.
 
 ## Possible extensions
 
 - Hybrid search (BM25 + vectors) and re-ranking
 - Streaming responses
 - Per-user collections and authentication
-- Evaluation with RAGAS (faithfulness, answer relevance)
